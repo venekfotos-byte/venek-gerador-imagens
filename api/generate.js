@@ -45,7 +45,8 @@ export default async function handler(req,res) {
     // A IA fornece apenas uma máscara de segmentação: pixels internos sempre vêm do arquivo original.
     const segmentation=await imageEdit('Isole o objeto/produto principal exatamente na mesma posição, tamanho e orientação da imagem enviada. Deixe tudo fora do produto com transparência total (alpha=0), incluindo sombra e cenário. Mantenha bordas precisas e todos os detalhes externos, recortes, orifícios e vazados. Não mude a posição e não aumente nem diminua o objeto. Saída PNG com transparência real.', 'transparent');
     const mask=await sharp(segmentation).resize(ow,oh,{fit:'fill'}).extractChannel('alpha').png().toBuffer();
-    const cutout=await sharp(original).composite([{input:mask,blend:'dest-in'}]).png().toBuffer();
+    const alphaMatte=await sharp({create:{width:ow,height:oh,channels:3,background:'#ffffff'}}).joinChannel(mask).png().toBuffer();
+    const cutout=await sharp(original).composite([{input:alphaMatte,blend:'dest-in'}]).png().toBuffer();
     let result;
     if(transparent) result=cutout;
     else if(white){
