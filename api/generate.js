@@ -45,7 +45,7 @@ export default async function handler(req,res) {
     // A IA fornece apenas uma máscara de segmentação: pixels internos sempre vêm do arquivo original.
     const segmentation=await imageEdit('Isole o objeto/produto principal exatamente na mesma posição, tamanho e orientação da imagem enviada. Deixe tudo fora do produto com transparência total (alpha=0), incluindo sombra e cenário. Mantenha bordas precisas e todos os detalhes externos, recortes, orifícios e vazados. Não mude a posição e não aumente nem diminua o objeto. Saída PNG com transparência real.', 'transparent');
     const mask=await sharp(segmentation).resize(ow,oh,{fit:'fill'}).extractChannel('alpha').png().toBuffer();
-    const cutout=await sharp(original).joinChannel(mask).png().toBuffer();
+    const cutout=await sharp(original).composite([{input:mask,blend:'dest-in'}]).png().toBuffer();
     let result;
     if(transparent) result=cutout;
     else if(white){
@@ -53,13 +53,7 @@ export default async function handler(req,res) {
       result=await sharp(whiteBG).composite([{input:cutout,gravity:'centre'}]).png().toBuffer();
     }else{
       // O cenário é gerado separadamente; a peça final é sempre o recorte ORIGINAL.
-      const fd=new FormData();
-      fd.append('model','gpt-image-1');
-      fd.append('size',size);
-      fd.append('quality','medium');
-      fd.append('output_format','png');
-      fd.append('prompt','Crie APENAS um cenário de fundo fotográfico de anúncio de produto. Não desenhe, represente, reconstrua nem insira o produto; mantenha a área central livre para receber o produto real em sobreposição. Ambiente solicitado: '+prompt.slice(0,4000)+'. Fundo realista, perspectiva coerente e apoio discreto.');
-      const response=await fetch('https://api.openai.com/v1/images/generations',{method:'POST',headers:{Authorization:'Bearer '+process.env.OPENAI_API_KEY},body:fd});
+      const response=await fetch('https://api.openai.com/v1/images/generations',{method:'POST',headers:{Authorization:'Bearer '+process.env.OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:'gpt-image-1',size,quality:'medium',output_format:'png',prompt:'Crie APENAS um cenário de fundo fotográfico de anúncio de produto. Não desenhe, represente, reconstrua nem insira o produto; mantenha a área central livre para receber o produto real em sobreposição. Ambiente solicitado: '+prompt.slice(0,4000)+'. Fundo realista, perspectiva coerente e apoio discreto.'})});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw Error(data.error?.message||'Falha ao criar fundo pela OpenAI.');
       const bg=Buffer.from(data.data?.[0]?.b64_json||'','base64');if(!bg.length)throw Error('A API não retornou cenário.');
