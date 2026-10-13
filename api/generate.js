@@ -1,13 +1,13 @@
-const ALLOWED_ORIGIN = 'https://venekfotos-byte.github.io';
+const ALLOWED_ORIGINS = new Set(['https://venekfotos-byte.github.io','https://venek-gerador-imagens.vercel.app']);
 export default async function handler(req,res) {
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  const origin = req.headers.origin; if(origin && ALLOWED_ORIGINS.has(origin))res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods','POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type, X-Venek-Access');
   res.setHeader('Cache-Control','no-store');
   if(req.method==='OPTIONS') return res.status(204).end();
   if(req.method!=='POST') return res.status(405).json({error:'Método não permitido.'});
-  if(req.headers.origin && req.headers.origin!==ALLOWED_ORIGIN) return res.status(403).json({error:'Origem não autorizada.'});
+  if(req.headers.origin && !ALLOWED_ORIGINS.has(req.headers.origin)) return res.status(403).json({error:'Origem não autorizada.'});
   if(!process.env.OPENAI_API_KEY || !process.env.VENEK_APP_PASSWORD)
     return res.status(503).json({error:'Configure OPENAI_API_KEY e VENEK_APP_PASSWORD na Vercel.'});
   if(req.headers['x-venek-access']!==process.env.VENEK_APP_PASSWORD)
