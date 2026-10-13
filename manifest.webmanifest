@@ -1,0 +1,16 @@
+{
+  "name": "VENEK Estúdio de Imagens IA",
+  "short_name": "Venek Imagens",
+  "start_url": "./",
+  "display": "standalone",
+  "theme_color": "#14284e",
+  "background_color": "#f1f5fa",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
