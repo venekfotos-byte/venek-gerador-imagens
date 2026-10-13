@@ -20,27 +20,56 @@ export default async function handler(req,res) {
     if(!m) return res.status(400).json({error:'Formato inválido. Use PNG, JPG ou WEBP.'});
     const buf=Buffer.from(m[2],'base64');
     if(buf.length>3300000) return res.status(413).json({error:'Foto muito grande. Reduza para 3 MB.'});
-    const transparent = mode==='transparent' || mode==='remove' || mode==='sem-fundo';
+    const transparent = mode==='transparente'||mode==='transparent'||mode==='remove'||mode==='sem-fundo';
+    const white = mode==='branco'||mode==='white';
     const size = ratio==='9:16'||ratio==='4:5'||ratio==='3:4'?'1024x1536':ratio==='16:9'?'1536x1024':'1024x1024';
-    const guidance=transparent?'Recorte somente o produto, sem fundo. Preserve a peça com máxima fidelidade, com transparência real no PNG.':'Edite a imagem usando a foto como referência principal. Preserve a forma, a cor, proporções, inscrições e detalhes reais do produto. Altere somente o fundo e a composição solicitados.';
-    const data=new FormData();
-    const mime=m[1],ext=mime==='image/jpeg'?'jpg':mime==='image/webp'?'webp':'png';
-    data.append('image',new Blob([buf],{type:mime}), 'produto.'+ext);
-    data.append('model','gpt-image-1');
-    data.append('prompt',guidance+'\n'+prompt);
-    data.append('size',size);
-    data.append('quality','medium');
-    data.append('output_format','png');
-    if(transparent) data.append('background','transparent');
-    const response=await fetch('https://api.openai.com/v1/images/edits',{method:'POST',headers:{Authorization:'Bearer '+process.env.OPENAI_API_KEY},body:data});
-    const out=await response.json().catch(()=>({}));
-    if(!response.ok) {
-      const detail=out.error?.message||'Erro ao gerar imagem.';
-      return res.status(response.status===429?429:502).json({error:detail.slice(0,500)});
+    const sharp=(await import('sharp')).default;
+    const original = await sharp(buf).rotate().ensureAlpha().png().toBuffer();
+    const {width:ow,height:oh}=await sharp(original).metadata();
+    const pictureFile=new Blob([original],{type:'image/png'});
+    async function imageEdit(instruction, bg) {
+      const fd=new FormData();
+      fd.append('image',pictureFile,'produto-original.png');
+      fd.append('model','gpt-image-1');
+      fd.append('prompt',instruction);
+      fd.append('size',size);
+      fd.append('quality','medium');
+      fd.append('output_format','png');
+      if(bg)fd.append('background',bg);
+      const response=await fetch('https://api.openai.com/v1/images/edits',{method:'POST',headers:{Authorization:'Bearer '+process.env.OPENAI_API_KEY},body:fd});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw Error(data.error?.message||'Falha na edição pela OpenAI.');
+      if(!data.data?.[0]?.b64_json)throw Error('A API não retornou imagem.');
+      return Buffer.from(data.data[0].b64_json,'base64');
     }
-    const b64=out.data?.[0]?.b64_json;
-    if(!b64) return res.status(502).json({error:'A API não retornou a imagem.'});
+    // A IA fornece apenas uma máscara de segmentação: pixels internos sempre vêm do arquivo original.
+    const segmentation=await imageEdit('Isole o objeto/produto principal exatamente na mesma posição, tamanho e orientação da imagem enviada. Deixe tudo fora do produto com transparência total (alpha=0), incluindo sombra e cenário. Mantenha bordas precisas e todos os detalhes externos, recortes, orifícios e vazados. Não mude a posição e não aumente nem diminua o objeto. Saída PNG com transparência real.', 'transparent');
+    const mask=await sharp(segmentation).resize(ow,oh,{fit:'fill'}).extractChannel('alpha').png().toBuffer();
+    const cutout=await sharp(original).joinChannel(mask).png().toBuffer();
+    let result;
+    if(transparent) result=cutout;
+    else if(white){
+      const whiteBG=await sharp({create:{width:ow,height:oh,channels:4,background:'#ffffff'}}).png().toBuffer();
+      result=await sharp(whiteBG).composite([{input:cutout,gravity:'centre'}]).png().toBuffer();
+    }else{
+      // O cenário é gerado separadamente; a peça final é sempre o recorte ORIGINAL.
+      const fd=new FormData();
+      fd.append('model','gpt-image-1');
+      fd.append('size',size);
+      fd.append('quality','medium');
+      fd.append('output_format','png');
+      fd.append('prompt','Crie APENAS um cenário de fundo fotográfico de anúncio de produto. Não desenhe, represente, reconstrua nem insira o produto; mantenha a área central livre para receber o produto real em sobreposição. Ambiente solicitado: '+prompt.slice(0,4000)+'. Fundo realista, perspectiva coerente e apoio discreto.');
+      const response=await fetch('https://api.openai.com/v1/images/generations',{method:'POST',headers:{Authorization:'Bearer '+process.env.OPENAI_API_KEY},body:fd});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw Error(data.error?.message||'Falha ao criar fundo pela OpenAI.');
+      const bg=Buffer.from(data.data?.[0]?.b64_json||'','base64');if(!bg.length)throw Error('A API não retornou cenário.');
+      const {width:bw,height:bh}=await sharp(bg).metadata();
+      const factor=Math.min(bw*.78/ow,bh*.78/oh,1.5);
+      const rw=Math.max(1,Math.round(ow*factor)),rh=Math.max(1,Math.round(oh*factor));
+      const resized=await sharp(cutout).resize(rw,rh).png().toBuffer();
+      result=await sharp(bg).composite([{input:resized,left:Math.floor((bw-rw)/2),top:Math.floor((bh-rh)/2)}]).png().toBuffer();
+    }
     res.setHeader('Content-Type','image/png');
-    return res.status(200).send(Buffer.from(b64,'base64'));
+    return res.status(200).send(result);
   } catch(e) {return res.status(500).json({error:'Erro interno ao processar imagem. Verifique o log na Vercel.'});}
 }
